@@ -61,8 +61,6 @@ done
 ZONE=us-west1-a
 TEST_RESULTS_GCS_DIR=gs://${TEST_RESULT_BUCKET}/${PULL_PULL_SHA}/${TEST_RESULT_FOLDER}
 ARTIFACT_DIR=$WORKSPACE/_artifacts
-WORKFLOW_COMPLETE_KEYWORD="completed=true"
-WORKFLOW_FAILED_KEYWORD="phase=Failed"
 PULL_ARGO_WORKFLOW_STATUS_MAX_ATTEMPT=$(expr $TIMEOUT_SECONDS / 20 )
 
 echo "presubmit test starts"
@@ -141,38 +139,34 @@ ARGO_WORKFLOW=`argo submit $(dirname $0)/${WORKFLOW_FILE} \
 `
 echo argo workflow submitted successfully
 
-echo "check status of argo workflow $ARGO_WORKFLOW...."
-# probing the argo workflow status until it completed. Timeout after 30 minutes
-for i in $(seq 1 ${PULL_ARGO_WORKFLOW_STATUS_MAX_ATTEMPT})
-do
-  WORKFLOW_STATUS=`kubectl get workflow $ARGO_WORKFLOW --show-labels`
-  echo $WORKFLOW_STATUS | grep ${WORKFLOW_COMPLETE_KEYWORD} && s=0 && break || s=$? && printf "Workflow ${ARGO_WORKFLOW} is not finished.\n${WORKFLOW_STATUS}\nSleep for 20 seconds...\n" && sleep 20
+#Wait for the workflow to appear
+while [ "$(kubectl get workflow/$ARGO_WORKFLOW -o=jsonpath='{.status.phase}')" == "" ]; do
+  echo "Workflow has not started yet"
+  sleep 10
 done
 
-# Check whether the argo workflow finished or not and exit if not.
-if [[ $s != 0 ]]; then
- echo "Prow job Failed: Argo workflow timeout.."
- argo logs -w ${ARGO_WORKFLOW}
- exit $s
-fi
+#TODO: Remove after https://github.com/argoproj/argo/issues/989 is fixed.
+while [ "$(kubectl get workflow/$ARGO_WORKFLOW -o=jsonpath='{.status.phase}')" == "Pending" ]; do
+  echo "Workflow is still Pending"
+  sleep 10
+done
+sleep 60 #Preventing error: "warning msg="container 'main' of pod 'build-images-xxxx-yyyyyyy' has not started within expected timeout" https://github.com/argoproj/argo/issues/1104
+
+#kubectl logs --follow --pod-running-timeout 200s workflow/$ARGO_WORKFLOW
+argo logs --follow --workflow $ARGO_WORKFLOW --timestamps
 
 echo "Argo workflow finished."
+
+argo get $ARGO_WORKFLOW
+WORKFLOW_STATUS=$(kubectl get workflow/$ARGO_WORKFLOW -o=jsonpath='{.status.phase}')
+echo Workflow finished with Status: $WORKFLOW_STATUS.
+if [ "$WORKFLOW_STATUS" != "Succeeded" ]; then
+  exit 1
+fi
 
 if [[ ! -z "$TEST_RESULT_FOLDER" ]]
 then
   echo "Copy test result"
   mkdir -p $ARTIFACT_DIR
   gsutil cp -r "${TEST_RESULTS_GCS_DIR}"/* "${ARTIFACT_DIR}" || true
-fi
-
-if [[ $WORKFLOW_STATUS = *"${WORKFLOW_FAILED_KEYWORD}"* ]]; then
-  echo "Test workflow failed."
-  echo "=========Argo Workflow Logs========="
-  argo logs -w ${ARGO_WORKFLOW}
-  echo "===================================="
-  argo get ${ARGO_WORKFLOW}
-  exit 1
-else
-  argo get ${ARGO_WORKFLOW}
-  exit 0
 fi
