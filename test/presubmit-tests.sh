@@ -150,7 +150,7 @@ while [ "$(kubectl get workflow/$ARGO_WORKFLOW -o=jsonpath='{.status.phase}')" =
   echo "Workflow is still Pending"
   sleep 10
 done
-sleep 60 #Preventing error: "warning msg="container 'main' of pod 'build-images-xxxx-yyyyyyy' has not started within expected timeout" https://github.com/argoproj/argo/issues/1104
+sleep 120 #Preventing error: "warning msg="container 'main' of pod 'build-images-xxxx-yyyyyyy' has not started within expected timeout" https://github.com/argoproj/argo/issues/1104
 
 #kubectl logs --follow --pod-running-timeout 200s workflow/$ARGO_WORKFLOW
 argo logs --follow --workflow $ARGO_WORKFLOW --timestamps
